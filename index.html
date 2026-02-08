@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple PDF to Image & Annotator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #pdf-canvas { border: 1px solid #ddd; max-width: 100%; cursor: crosshair; }
+        .active-tool { background-color: #3b82f6 !important; color: white !important; }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="bg-white shadow-sm p-4 flex justify-between items-center px-8">
+        <div class="flex items-center gap-2">
+            <i data-lucide="file-type-2" class="text-red-500"></i>
+            <h1 class="text-xl font-bold">PDF <span class="text-blue-600">Snap</span></h1>
+        </div>
+        <div id="controls" class="hidden flex gap-4 items-center">
+            <div class="flex bg-gray-200 rounded-lg p-1">
+                <button id="prev-page" class="p-2 hover:bg-white rounded-md transition"><i data-lucide="chevron-left"></i></button>
+                <span class="px-4 py-2 text-sm font-medium">Page <span id="page-num">0</span> / <span id="page-count">0</span></span>
+                <button id="next-page" class="p-2 hover:bg-white rounded-md transition"><i data-lucide="chevron-right"></i></button>
+            </div>
+            <div class="h-6 w-px bg-gray-300"></div>
+            <button id="download-png" class="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-green-700 transition">
+                <i data-lucide="image"></i> Save PNG
+            </button>
+        </div>
+    </header>
+
+    <main class="flex-1 p-6 flex flex-col items-center">
+        <!-- Upload Area -->
+        <div id="upload-box" class="w-full max-w-xl bg-white p-12 rounded-2xl shadow-lg border-2 border-dashed border-gray-300 text-center">
+            <input type="file" id="pdf-upload" class="hidden" accept="application/pdf">
+            <label for="pdf-upload" class="cursor-pointer">
+                <i data-lucide="upload-cloud" class="w-16 h-16 text-blue-500 mx-auto mb-4"></i>
+                <h2 class="text-2xl font-bold mb-2">PDF Upload Karein</h2>
+                <p class="text-gray-500">Apni file yahan drag karein ya click karke select karein</p>
+            </label>
+        </div>
+
+        <!-- Editor UI -->
+        <div id="editor-ui" class="hidden w-full max-w-5xl flex gap-6">
+            <!-- Toolbar -->
+            <div class="w-20 bg-white shadow-md rounded-2xl p-4 flex flex-col gap-6 items-center">
+                <button id="tool-pen" title="Pen" class="p-3 rounded-xl bg-gray-100 hover:bg-blue-50 transition active-tool tool-btn">
+                    <i data-lucide="pencil"></i>
+                </button>
+                <button id="tool-eraser" title="Eraser" class="p-3 rounded-xl bg-gray-100 hover:bg-blue-50 transition tool-btn">
+                    <i data-lucide="eraser"></i>
+                </button>
+                <div class="w-full h-px bg-gray-200"></div>
+                <input type="color" id="pen-color" value="#0000FF" class="w-10 h-10 cursor-pointer border-none bg-transparent">
+                <select id="pen-size" class="w-12 text-xs border rounded p-1">
+                    <option value="2">2px</option>
+                    <option value="5" selected>5px</option>
+                    <option value="10">10px</option>
+                </select>
+            </div>
+
+            <!-- Canvas View -->
+            <div class="flex-1 bg-white p-4 rounded-2xl shadow-inner border overflow-auto flex justify-center items-start">
+                <canvas id="pdf-canvas"></canvas>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        lucide.createIcons();
+
+        // PDF.js worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        let pdfDoc = null,
+            pageNum = 1,
+            canvas = document.getElementById('pdf-canvas'),
+            ctx = canvas.getContext('2d'),
+            isDrawing = false,
+            currentTool = 'pen',
+            drawingPaths = []; // Per page drawing storage
+
+        // UI Elements
+        const uploadBox = document.getElementById('upload-box');
+        const editorUi = document.getElementById('editor-ui');
+        const controls = document.getElementById('controls');
+        const fileInput = document.getElementById('pdf-upload');
+
+        // File Selection
+        fileInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (file && file.type === 'application/pdf') {
+                const reader = new FileReader();
+                reader.onload = async function() {
+                    const data = new Uint8Array(this.result);
+                    pdfDoc = await pdfjsLib.getDocument(data).promise;
+                    document.getElementById('page-count').textContent = pdfDoc.numPages;
+                    uploadBox.classList.add('hidden');
+                    editorUi.classList.remove('hidden');
+                    controls.classList.remove('hidden');
+                    renderPage(pageNum);
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        });
+
+        async function renderPage(num) {
+            const page = await pdfDoc.getPage(num);
+            const viewport = page.getViewport({ scale: 1.5 });
+            
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            // Render PDF to Canvas
+            const renderContext = {
+                canvasContext: ctx,
+                viewport: viewport
+            };
+            await page.render(renderContext).promise;
+            
+            document.getElementById('page-num').textContent = num;
+            
+            // Re-draw saved annotations if any (Basic implementation)
+            // Note: In a full app, you'd store paths per page index
+        }
+
+        // Navigation
+        document.getElementById('prev-page').addEventListener('click', () => {
+            if (pageNum <= 1) return;
+            pageNum--;
+            renderPage(pageNum);
+        });
+
+        document.getElementById('next-page').addEventListener('click', () => {
+            if (pageNum >= pdfDoc.numPages) return;
+            pageNum++;
+            renderPage(pageNum);
+        });
+
+        // Drawing Logic
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseout', stopDrawing);
+
+        function startDrawing(e) {
+            isDrawing = true;
+            draw(e);
+        }
+
+        function draw(e) {
+            if (!isDrawing) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            ctx.lineWidth = document.getElementById('pen-size').value;
+            ctx.lineCap = 'round';
+            
+            if (currentTool === 'pen') {
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.strokeStyle = document.getElementById('pen-color').value;
+            } else {
+                ctx.globalCompositeOperation = 'destination-out';
+                ctx.lineWidth = 20; // Bigger eraser
+            }
+
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+        }
+
+        function stopDrawing() {
+            isDrawing = false;
+            ctx.beginPath();
+        }
+
+        // Tool Selection
+        document.getElementById('tool-pen').addEventListener('click', function() {
+            currentTool = 'pen';
+            updateToolUI(this);
+        });
+
+        document.getElementById('tool-eraser').addEventListener('click', function() {
+            currentTool = 'eraser';
+            updateToolUI(this);
+        });
+
+        function updateToolUI(btn) {
+            document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active-tool'));
+            btn.classList.add('active-tool');
+        }
+
+        // Export to Image
+        document.getElementById('download-png').addEventListener('click', () => {
+            const link = document.createElement('a');
+            link.download = `pdf-export-page-${pageNum}.png`;
+            // Capture the current canvas state
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        });
+
+    </script>
+</body>
+</html>
